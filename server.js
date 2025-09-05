@@ -106,6 +106,48 @@ async function initializeDatabase() {
       )
     `);
 
+    // Create tables table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tables (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id),
+        name VARCHAR(100) NOT NULL,
+        seats INTEGER DEFAULT 4,
+        description TEXT,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
+    // Create orders table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id),
+        table_id UUID REFERENCES tables(id),
+        user_id UUID REFERENCES users(id),
+        customer_name VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'pending',
+        total_amount DECIMAL(10,2) DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
+    // Create sync_log table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sync_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id),
+        table_name VARCHAR(255) NOT NULL,
+        record_id UUID NOT NULL,
+        operation VARCHAR(50) NOT NULL,
+        user_id UUID REFERENCES users(id),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
     console.log('Database schema initialized successfully');
   } catch (error) {
     console.error('Database initialization error:', error);
@@ -159,10 +201,20 @@ const verifyFirebaseToken = async (req, res, next) => {
         const newAnonymous = await pool.query(
           `INSERT INTO users (firebase_uid, email, display_name) 
            VALUES ($1, $2, $3) 
+           ON CONFLICT (firebase_uid) DO NOTHING
            RETURNING *`,
           ['anonymous', 'anonymous@example.com', 'Anonymous User']
         );
-        req.dbUser = newAnonymous.rows[0];
+        if (newAnonymous.rows.length > 0) {
+          req.dbUser = newAnonymous.rows[0];
+        } else {
+          // User was created by another request, fetch it
+          const existingAnonymous = await pool.query(
+            'SELECT * FROM users WHERE firebase_uid = $1',
+            ['anonymous']
+          );
+          req.dbUser = existingAnonymous.rows[0];
+        }
       } else {
         req.dbUser = anonymousResult.rows[0];
       }
