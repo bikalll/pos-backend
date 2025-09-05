@@ -169,23 +169,34 @@ app.post('/api/auth/register', verifyFirebaseToken, async (req, res) => {
     const { organizationName, role = 'manager' } = req.body;
     const userId = req.dbUser.id;
 
-    // Create organization if provided
+    // Check if user already has organizations
+    const existingOrgs = await pool.query(
+      `SELECT COUNT(*) as count FROM user_organizations WHERE user_id = $1`,
+      [userId]
+    );
+
     let organizationId = null;
-    if (organizationName) {
+    
+    // Only create organization if user doesn't have any
+    if (existingOrgs.rows[0].count === '0') {
+      const defaultOrgName = organizationName || `${req.dbUser.display_name || req.dbUser.email}'s Restaurant`;
+      
       const orgResult = await pool.query(
         `INSERT INTO organizations (name, owner_id) 
          VALUES ($1, $2) 
-         RETURNING id`,
-        [organizationName, userId]
+         RETURNING id, name`,
+        [defaultOrgName, userId]
       );
       organizationId = orgResult.rows[0].id;
 
-      // Add user to organization
+      // Add user to organization as manager
       await pool.query(
         `INSERT INTO user_organizations (user_id, organization_id, role) 
          VALUES ($1, $2, $3)`,
-        [userId, organizationId, role]
+        [userId, organizationId, 'manager']
       );
+
+      console.log(`Created organization "${orgResult.rows[0].name}" for user ${userId}`);
     }
 
     res.json({ 
