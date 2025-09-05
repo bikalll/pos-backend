@@ -148,7 +148,28 @@ const verifyFirebaseToken = async (req, res, next) => {
   if (!firebaseInitialized) {
     console.warn('Firebase not initialized, skipping token verification');
     req.user = { uid: 'anonymous' };
-    req.dbUser = { id: 1 }; // Default user for development
+    // Create or get anonymous user with UUID
+    try {
+      const anonymousResult = await pool.query(
+        'SELECT * FROM users WHERE firebase_uid = $1',
+        ['anonymous']
+      );
+      
+      if (anonymousResult.rows.length === 0) {
+        const newAnonymous = await pool.query(
+          `INSERT INTO users (firebase_uid, email, display_name) 
+           VALUES ($1, $2, $3) 
+           RETURNING *`,
+          ['anonymous', 'anonymous@example.com', 'Anonymous User']
+        );
+        req.dbUser = newAnonymous.rows[0];
+      } else {
+        req.dbUser = anonymousResult.rows[0];
+      }
+    } catch (error) {
+      console.error('Error creating anonymous user:', error);
+      return res.status(500).json({ error: 'Database error' });
+    }
     return next();
   }
 
