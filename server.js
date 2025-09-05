@@ -149,8 +149,117 @@ async function initializeDatabase() {
     `);
 
     console.log('Database schema initialized successfully');
+    
+    // Add some sample data for testing
+    await createSampleData();
   } catch (error) {
     console.error('Database initialization error:', error);
+  }
+}
+
+// Function to create sample data for testing
+async function createSampleData() {
+  try {
+    // Check if we already have sample data
+    const existingTables = await pool.query('SELECT COUNT(*) FROM tables');
+    if (existingTables.rows[0].count > 0) {
+      console.log('Sample data already exists, skipping creation');
+      return;
+    }
+
+    // Get the anonymous user's organization
+    const orgResult = await pool.query(
+      `SELECT o.id, o.name FROM organizations o 
+       JOIN users u ON o.owner_id = u.id 
+       WHERE u.firebase_uid = 'anonymous' 
+       LIMIT 1`
+    );
+
+    if (orgResult.rows.length === 0) {
+      console.log('No organization found for sample data');
+      return;
+    }
+
+    const orgId = orgResult.rows[0].id;
+    const orgName = orgResult.rows[0].name;
+    console.log(`Creating sample data for organization: ${orgName} (${orgId})`);
+
+    // Create sample tables
+    const tableData = [
+      { name: 'Table 1', seats: 4, description: 'Window table for 4 people' },
+      { name: 'Table 2', seats: 2, description: 'Cozy table for couples' },
+      { name: 'Table 3', seats: 6, description: 'Large family table' },
+      { name: 'Table 4', seats: 4, description: 'Center table' },
+      { name: 'VIP Table', seats: 8, description: 'Premium dining experience' }
+    ];
+
+    for (const table of tableData) {
+      await pool.query(
+        `INSERT INTO tables (organization_id, name, seats, description) 
+         VALUES ($1, $2, $3, $4)`,
+        [orgId, table.name, table.seats, table.description]
+      );
+    }
+
+    console.log(`Created ${tableData.length} sample tables`);
+
+    // Create menu_categories table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS menu_categories (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id),
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
+    // Create menu_items table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS menu_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id),
+        category_id UUID REFERENCES menu_categories(id),
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        price DECIMAL(10,2) NOT NULL,
+        stock_quantity INTEGER DEFAULT 0,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
+    // Create sample menu categories and items
+    const categoryResult = await pool.query(
+      `INSERT INTO menu_categories (organization_id, name, description) 
+       VALUES ($1, $2, $3) RETURNING id`,
+      [orgId, 'Main Dishes', 'Delicious main course items']
+    );
+    const categoryId = categoryResult.rows[0].id;
+
+    const menuItems = [
+      { name: 'Grilled Chicken', price: 15.99, description: 'Tender grilled chicken breast' },
+      { name: 'Beef Burger', price: 12.99, description: 'Juicy beef burger with fries' },
+      { name: 'Caesar Salad', price: 9.99, description: 'Fresh romaine lettuce with caesar dressing' },
+      { name: 'Fish & Chips', price: 14.99, description: 'Beer battered fish with crispy chips' }
+    ];
+
+    for (const item of menuItems) {
+      await pool.query(
+        `INSERT INTO menu_items (organization_id, category_id, name, description, price) 
+         VALUES ($1, $2, $3, $4, $5)`,
+        [orgId, categoryId, item.name, item.description, item.price]
+      );
+    }
+
+    console.log(`Created ${menuItems.length} sample menu items`);
+    console.log('Sample data creation completed successfully');
+
+  } catch (error) {
+    console.error('Error creating sample data:', error);
   }
 }
 
