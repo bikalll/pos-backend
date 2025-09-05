@@ -167,11 +167,10 @@ async function createSampleData() {
       return;
     }
 
-    // Get the anonymous user's organization
+    // Get any existing organization for sample data
     const orgResult = await pool.query(
       `SELECT o.id, o.name FROM organizations o 
-       JOIN users u ON o.owner_id = u.id 
-       WHERE u.firebase_uid = 'anonymous' 
+       ORDER BY o.created_at ASC
        LIMIT 1`
     );
 
@@ -297,41 +296,8 @@ try {
 // Middleware to verify Firebase token
 const verifyFirebaseToken = async (req, res, next) => {
   if (!firebaseInitialized) {
-    console.warn('Firebase not initialized, skipping token verification');
-    req.user = { uid: 'anonymous' };
-    // Create or get anonymous user with UUID
-    try {
-      const anonymousResult = await pool.query(
-        'SELECT * FROM users WHERE firebase_uid = $1',
-        ['anonymous']
-      );
-      
-      if (anonymousResult.rows.length === 0) {
-        const newAnonymous = await pool.query(
-          `INSERT INTO users (firebase_uid, email, display_name) 
-           VALUES ($1, $2, $3) 
-           ON CONFLICT (firebase_uid) DO NOTHING
-           RETURNING *`,
-          ['anonymous', 'anonymous@example.com', 'Anonymous User']
-        );
-        if (newAnonymous.rows.length > 0) {
-          req.dbUser = newAnonymous.rows[0];
-        } else {
-          // User was created by another request, fetch it
-          const existingAnonymous = await pool.query(
-            'SELECT * FROM users WHERE firebase_uid = $1',
-            ['anonymous']
-          );
-          req.dbUser = existingAnonymous.rows[0];
-        }
-      } else {
-        req.dbUser = anonymousResult.rows[0];
-      }
-    } catch (error) {
-      console.error('Error creating anonymous user:', error);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    return next();
+    console.warn('Firebase not initialized, but continuing with token verification');
+    // Don't skip - still try to process the token
   }
 
   try {
@@ -340,7 +306,15 @@ const verifyFirebaseToken = async (req, res, next) => {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    const decodedToken = await admin.auth().verifyIdToken(token);
+    // Try to verify token even if Firebase isn't fully initialized
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(token);
+    } catch (firebaseError) {
+      console.error('Firebase token verification failed:', firebaseError);
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
     req.user = decodedToken;
     
     // Get user from database
