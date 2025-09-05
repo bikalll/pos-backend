@@ -52,7 +52,7 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Test database connection
+// Test database connection and run migration
 pool.on('connect', () => {
   console.log('Connected to PostgreSQL database');
 });
@@ -60,6 +60,60 @@ pool.on('connect', () => {
 pool.on('error', (err) => {
   console.error('PostgreSQL connection error:', err);
 });
+
+// Auto-run database migration on startup
+async function initializeDatabase() {
+  try {
+    console.log('Initializing database schema...');
+    
+    // Create users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        firebase_uid VARCHAR(128) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        display_name VARCHAR(255),
+        role VARCHAR(50) DEFAULT 'waiter' CHECK (role IN ('manager', 'cashier', 'waiter')),
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
+    // Create organizations table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS organizations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        owner_id UUID REFERENCES users(id),
+        settings JSONB DEFAULT '{}',
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+
+    // Create user_organizations table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_organizations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id),
+        organization_id UUID REFERENCES organizations(id),
+        role VARCHAR(50) DEFAULT 'waiter' CHECK (role IN ('manager', 'cashier', 'waiter')),
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        UNIQUE(user_id, organization_id)
+      )
+    `);
+
+    console.log('Database schema initialized successfully');
+  } catch (error) {
+    console.error('Database initialization error:', error);
+  }
+}
+
+// Initialize database on startup
+initializeDatabase();
 
 // Firebase Admin SDK initialization with better error handling
 let firebaseInitialized = false;

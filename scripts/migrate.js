@@ -10,40 +10,42 @@ async function createSchema() {
   console.log('Creating database schema...');
   
   try {
-    // Create organizations table
+    // Create users table first (organizations references it)
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS organizations (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        owner_id INTEGER,
-        settings JSONB DEFAULT '{}',
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        firebase_uid VARCHAR(128) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        display_name VARCHAR(255),
+        role VARCHAR(50) DEFAULT 'waiter' CHECK (role IN ('manager', 'cashier', 'waiter')),
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
     `);
 
-    // Create users table
+    // Create organizations table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        firebase_uid VARCHAR(255) UNIQUE NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        display_name VARCHAR(255),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+      CREATE TABLE IF NOT EXISTS organizations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        owner_id UUID REFERENCES users(id),
+        settings JSONB DEFAULT '{}',
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
     `);
 
     // Create user_organizations table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_organizations (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
-        role VARCHAR(50) DEFAULT 'staff',
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id),
+        organization_id UUID REFERENCES organizations(id),
+        role VARCHAR(50) DEFAULT 'waiter' CHECK (role IN ('manager', 'cashier', 'waiter')),
         is_active BOOLEAN DEFAULT true,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         UNIQUE(user_id, organization_id)
       )
     `);
@@ -51,15 +53,18 @@ async function createSchema() {
     // Create tables table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tables (
-        id SERIAL PRIMARY KEY,
-        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
-        name VARCHAR(255) NOT NULL,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id),
+        name VARCHAR(100) NOT NULL,
         seats INTEGER DEFAULT 4,
         description TEXT,
-        status VARCHAR(50) DEFAULT 'available',
-        version INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+        is_active BOOLEAN DEFAULT true,
+        is_merged BOOLEAN DEFAULT false,
+        merged_tables UUID[],
+        merged_table_names TEXT[],
+        total_seats INTEGER,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
     `);
 
