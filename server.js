@@ -16,17 +16,11 @@ const PORT = process.env.PORT || 3000;
 // CORS configuration for production
 const corsOptions = {
   origin: isProduction 
-    ? [
-        'https://your-frontend-domain.com',
-        'https://your-expo-app.com',
-        /\.railway\.app$/,
-        /\.vercel\.app$/,
-        /\.netlify\.app$/
-      ]
+    ? true  // Allow all origins for React Native apps
     : "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
+  credentials: false  // Set to false for React Native
 };
 
 const io = socketIo(server, {
