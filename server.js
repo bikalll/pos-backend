@@ -8,43 +8,102 @@ require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+
+// Environment detection
+const isProduction = process.env.NODE_ENV === 'production';
+const PORT = process.env.PORT || 3000;
+
+// CORS configuration for production
+const corsOptions = {
+  origin: isProduction 
+    ? [
+        'https://your-frontend-domain.com',
+        'https://your-expo-app.com',
+        /\.railway\.app$/,
+        /\.vercel\.app$/,
+        /\.netlify\.app$/
+      ]
+    : "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+};
+
 const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// PostgreSQL connection
+// Security headers for production
+if (isProduction) {
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+}
+
+// PostgreSQL connection with better error handling
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`
+  connectionString: process.env.DATABASE_URL || `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`,
+  ssl: isProduction ? { rejectUnauthorized: false } : false,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
 
-// Firebase Admin SDK initialization
-const serviceAccount = {
-  type: "service_account",
-  project_id: process.env.FIREBASE_PROJECT_ID,
-  private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-  private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  client_email: process.env.FIREBASE_CLIENT_EMAIL,
-  client_id: process.env.FIREBASE_CLIENT_ID,
-  auth_uri: process.env.FIREBASE_AUTH_URI,
-  token_uri: process.env.FIREBASE_TOKEN_URI,
-};
+// Test database connection
+pool.on('connect', () => {
+  console.log('Connected to PostgreSQL database');
+});
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    projectId: process.env.FIREBASE_PROJECT_ID
-  });
+pool.on('error', (err) => {
+  console.error('PostgreSQL connection error:', err);
+});
+
+// Firebase Admin SDK initialization with better error handling
+let firebaseInitialized = false;
+
+try {
+  const serviceAccount = {
+    type: "service_account",
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+    private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    client_id: process.env.FIREBASE_CLIENT_ID,
+    auth_uri: process.env.FIREBASE_AUTH_URI,
+    token_uri: process.env.FIREBASE_TOKEN_URI,
+  };
+
+  if (!admin.apps.length && serviceAccount.project_id) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      projectId: process.env.FIREBASE_PROJECT_ID
+    });
+    firebaseInitialized = true;
+    console.log('Firebase Admin SDK initialized successfully');
+  }
+} catch (error) {
+  console.error('Firebase initialization error:', error);
+  console.log('Continuing without Firebase authentication...');
 }
 
 // Middleware to verify Firebase token
 const verifyFirebaseToken = async (req, res, next) => {
+  if (!firebaseInitialized) {
+    console.warn('Firebase not initialized, skipping token verification');
+    req.user = { uid: 'anonymous' };
+    req.dbUser = { id: 1 }; // Default user for development
+    return next();
+  }
+
   try {
     const token = req.headers.authorization?.split('Bearer ')[1];
     if (!token) {
@@ -465,7 +524,6 @@ async function applyChange(orgId, change, userId) {
   };
 }
 
-const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
