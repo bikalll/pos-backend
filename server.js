@@ -202,6 +202,13 @@ app.post('/api/auth/register', verifyFirebaseToken, async (req, res) => {
 // Get user organizations
 app.get('/api/auth/organizations', verifyFirebaseToken, async (req, res) => {
   try {
+    console.log('Getting organizations for user:', req.dbUser?.id);
+    
+    if (!req.dbUser?.id) {
+      console.error('No dbUser.id found in request');
+      return res.status(400).json({ error: 'User not found in database' });
+    }
+    
     const result = await pool.query(
       `SELECT o.*, uo.role 
        FROM organizations o 
@@ -209,10 +216,13 @@ app.get('/api/auth/organizations', verifyFirebaseToken, async (req, res) => {
        WHERE uo.user_id = $1 AND uo.is_active = true`,
       [req.dbUser.id]
     );
+    
+    console.log('Organizations query result:', result.rows.length, 'organizations found');
     res.json(result.rows);
   } catch (error) {
     console.error('Get organizations error:', error);
-    res.status(500).json({ error: 'Failed to get organizations' });
+    console.error('Error details:', error.message);
+    res.status(500).json({ error: 'Failed to get organizations', details: error.message });
   }
 });
 
