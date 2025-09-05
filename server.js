@@ -1,13 +1,41 @@
 const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { body, validationResult } = require('express-validator');
+const morgan = require('morgan');
+const winston = require('winston');
 const { Pool } = require('pg');
 const admin = require('firebase-admin');
+const http = require('http');
+const socketIo = require('socket.io');
 require('dotenv').config();
+
+// Configure Winston logger
+const logger = winston.createLogger({
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.simple()
+    })
+  ]
+});
 
 const app = express();
 const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.NODE_ENV === 'production' 
+      ? [process.env.FRONTEND_URL || 'https://your-app.vercel.app']
+      : "*",
+    methods: ["GET", "POST"]
+  }
+});
 
 // Environment detection
 const isProduction = process.env.NODE_ENV === 'production';
@@ -23,25 +51,29 @@ const corsOptions = {
   credentials: false  // Set to false for React Native
 };
 
-const io = socketIo(server, {
-  cors: corsOptions
-});
-
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Security headers for production
-if (isProduction) {
-  app.use((req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    next();
-  });
-}
+// Security middleware
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false // Disable for React Native compatibility
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: isProduction ? 100 : 1000, // Limit each IP to 100 requests per windowMs in production
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', limiter);
+
+// Request logging
+app.use(morgan(isProduction ? 'combined' : 'dev'));
 
 // PostgreSQL connection with better error handling
 const pool = new Pool({
@@ -52,19 +84,42 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Test database connection and run migration
-pool.on('connect', () => {
-  console.log('Connected to PostgreSQL database');
+// Test database connection with proper error handling
+pool.connect((err, client, release) => {
+  if (err) {
+    logger.error('Database connection failed:', err);
+    process.exit(1);
+  } else {
+    logger.info('Connected to PostgreSQL database');
+    release();
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Process terminated');
+    pool.end();
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Process terminated');
+    pool.end();
+  });
 });
 
 pool.on('error', (err) => {
-  console.error('PostgreSQL connection error:', err);
+  logger.error('PostgreSQL connection error:', err);
 });
 
 // Auto-run database migration on startup
 async function initializeDatabase() {
   try {
-    console.log('Initializing database schema...');
+    logger.info('Initializing database schema...');
     
     // Create users table
     await pool.query(`
@@ -148,12 +203,12 @@ async function initializeDatabase() {
       )
     `);
 
-    console.log('Database schema initialized successfully');
+    logger.info('Database schema initialized successfully');
     
     // Add some sample data for testing
     await createSampleData();
   } catch (error) {
-    console.error('Database initialization error:', error);
+    logger.error('Database initialization error:', error);
   }
 }
 
@@ -163,7 +218,7 @@ async function createSampleData() {
     // Check if we already have sample data
     const existingTables = await pool.query('SELECT COUNT(*) FROM tables');
     if (existingTables.rows[0].count > 0) {
-      console.log('Sample data already exists, skipping creation');
+      logger.info('Sample data already exists, skipping creation');
       return;
     }
 
@@ -175,13 +230,13 @@ async function createSampleData() {
     );
 
     if (orgResult.rows.length === 0) {
-      console.log('No organization found for sample data');
+      logger.info('No organization found for sample data');
       return;
     }
 
     const orgId = orgResult.rows[0].id;
     const orgName = orgResult.rows[0].name;
-    console.log(`Creating sample data for organization: ${orgName} (${orgId})`);
+    logger.info(`Creating sample data for organization: ${orgName} (${orgId})`);
 
     // Create sample tables
     const tableData = [
@@ -200,7 +255,7 @@ async function createSampleData() {
       );
     }
 
-    console.log(`Created ${tableData.length} sample tables`);
+    logger.info(`Created ${tableData.length} sample tables`);
 
     // Create menu_categories table if it doesn't exist
     await pool.query(`
@@ -254,11 +309,11 @@ async function createSampleData() {
       );
     }
 
-    console.log(`Created ${menuItems.length} sample menu items`);
-    console.log('Sample data creation completed successfully');
+    logger.info(`Created ${menuItems.length} sample menu items`);
+    logger.info('Sample data creation completed successfully');
 
   } catch (error) {
-    console.error('Error creating sample data:', error);
+    logger.error('Error creating sample data:', error);
   }
 }
 
@@ -286,18 +341,17 @@ try {
       projectId: process.env.FIREBASE_PROJECT_ID
     });
     firebaseInitialized = true;
-    console.log('Firebase Admin SDK initialized successfully');
+    logger.info('Firebase Admin SDK initialized successfully');
   }
 } catch (error) {
-  console.error('Firebase initialization error:', error);
-  console.log('Continuing without Firebase authentication...');
+  logger.error('Firebase initialization error:', error);
+  logger.warn('Continuing without Firebase authentication...');
 }
 
 // Middleware to verify Firebase token
 const verifyFirebaseToken = async (req, res, next) => {
   if (!firebaseInitialized) {
-    console.warn('Firebase not initialized, but continuing with token verification');
-    // Don't skip - still try to process the token
+    logger.warn('Firebase not initialized, but continuing with token verification');
   }
 
   try {
@@ -311,7 +365,7 @@ const verifyFirebaseToken = async (req, res, next) => {
     try {
       decodedToken = await admin.auth().verifyIdToken(token);
     } catch (firebaseError) {
-      console.error('Firebase token verification failed:', firebaseError);
+      logger.error('Firebase token verification failed:', firebaseError);
       return res.status(401).json({ error: 'Invalid token' });
     }
     
@@ -372,6 +426,10 @@ const broadcastUpdate = (organizationId, eventType, data) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+
+// Import health routes
+const healthRoutes = require('./routes/health');
+app.use('/api', healthRoutes);
 
 // Auth routes
 app.post('/api/auth/register', verifyFirebaseToken, async (req, res) => {
@@ -663,7 +721,7 @@ app.post('/api/orders/:orgId', verifyFirebaseToken, async (req, res) => {
     res.json(completeOrder);
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Create order error:', error);
+    logger.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
   } finally {
     client.release();
