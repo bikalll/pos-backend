@@ -1,0 +1,21 @@
+{
+  "name": "pos-backend",
+  "version": "1.0.0",
+  "description": "Multi-user POS Backend with PostgreSQL and WebSocket support",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "echo 'No build step required for Node.js'",
+    "migrate": "node scripts/migrate.js",
+    "deploy": "npm run migrate && npm start",
+    "railway:deploy": "npm run migrate",
+    "test": "echo 'No tests specified' && exit 0"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+  
